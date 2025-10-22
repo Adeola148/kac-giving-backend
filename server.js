@@ -1,31 +1,50 @@
-// server.js
+cat > server.js <<'EOF'
+// server.js (diagnostic)
 const express = require('express');
 const cors = require('cors');
 const Stripe = require('stripe');
 
 const app = express();
 
+// Basic diagnostics
+const PORT = process.env.PORT || 3000;
+const HAS_STRIPE = !!process.env.STRIPE_SECRET_KEY;
+
+console.log('🔧 Booting server...');
+console.log('• PORT =', PORT);
+console.log('• NODE_ENV =', process.env.NODE_ENV || '(not set)');
+console.log('• STRIPE_SECRET_KEY present =', HAS_STRIPE);
+
 // Allow all while testing; restrict later
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// Safe, lazy Stripe init
+// Safe, lazy Stripe init so startup never crashes if key is missing
 let stripe = null;
 function getStripe() {
   if (stripe) return stripe;
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key) {
-    // Don’t throw at startup; log and let the route handle it gracefully
-    console.warn('⚠️ STRIPE_SECRET_KEY is missing. /create-checkout will return 500 until it is set.');
+    console.warn('⚠️  STRIPE_SECRET_KEY missing. /create-checkout will return 500 until it is set.');
     return null;
   }
   stripe = new Stripe(key, { apiVersion: '2024-06-20' });
   return stripe;
 }
 
-// Health check
+// Health check + env signal
 app.get('/', (_req, res) => {
-  res.send('KAC Giving Backend is running ✅');
+  res.status(200).send('KAC Giving Backend is running ✅');
+});
+
+app.get('/health', (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    port: PORT,
+    hasStripeKey: HAS_STRIPE,
+    node: process.version,
+    time: new Date().toISOString(),
+  });
 });
 
 /**
@@ -67,11 +86,17 @@ app.post('/create-checkout', async (req, res) => {
 
     return res.json({ url: session.url });
   } catch (err) {
-    console.error('Checkout error:', err);
+    console.error('❌ Checkout error:', err);
     return res.status(500).send('Failed to create checkout session.');
   }
 });
 
+// Global error visibility
+process.on('unhandledRejection', (e) => console.error('UNHANDLED REJECTION:', e));
+process.on('uncaughtException', (e) => console.error('UNCAUGHT EXCEPTION:', e));
+
 // Start (Render sets PORT)
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Server listening on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Server listening on ${PORT} (0.0.0.0)`);
+});
+EOF
